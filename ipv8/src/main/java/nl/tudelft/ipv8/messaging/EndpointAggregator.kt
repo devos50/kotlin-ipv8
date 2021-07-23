@@ -5,6 +5,7 @@ import nl.tudelft.ipv8.Peer
 import nl.tudelft.ipv8.messaging.bluetooth.BluetoothAddress
 import nl.tudelft.ipv8.messaging.bluetooth.BluetoothEndpoint
 import nl.tudelft.ipv8.messaging.udp.UdpEndpoint
+import nl.tudelft.ipv8.peerdiscovery.Network
 import java.util.*
 
 /**
@@ -12,7 +13,7 @@ import java.util.*
  */
 class EndpointAggregator(
     val udpEndpoint: UdpEndpoint?,
-    val bluetoothEndpoint: BluetoothEndpoint?
+    private val bluetoothEndpoint: BluetoothEndpoint?
 ) : Endpoint<Peer>(), EndpointListener {
     private var isOpen: Boolean = false
 
@@ -21,10 +22,18 @@ class EndpointAggregator(
      * the method should send only over the most suitable transport.
      */
     override fun send(peer: Peer, data: ByteArray) {
+        send(peer, data, false)
+    }
+
+    /**
+     * Sends a message to the peer. Currently it sends over all available endpoints. In the future,
+     * the method should send only over the most suitable transport.
+     */
+    fun send(peer: Peer, data: ByteArray, reliable: Boolean) {
         peer.lastRequest = Date()
 
         if (!peer.address.isEmpty() && udpEndpoint != null) {
-            udpEndpoint.send(peer, data)
+            udpEndpoint.send(peer, data, reliable)
         }
 
         val bluetoothAddress = peer.bluetoothAddress

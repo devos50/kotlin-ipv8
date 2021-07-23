@@ -33,8 +33,6 @@ abstract class Endpoint<A> {
     }
 
     protected fun setEstimatedLan(address: IPv4Address) {
-        logger.info("Estimated LAN address: $address")
-
         estimatedLan = address
 
         for (listener in listeners) {

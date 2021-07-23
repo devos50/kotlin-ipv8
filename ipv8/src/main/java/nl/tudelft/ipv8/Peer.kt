@@ -59,6 +59,15 @@ data class Peer(
      */
     var identityPrivateKeyHuge: BonehPrivateKey? = null,
 
+    /**
+     * True if this peer signals support for UTP.
+     */
+    var supportsUTP: Boolean = false,
+
+    /**
+     * True if this peer signals support for FastTFTP.
+     */
+    var supportsFastTFTP: Boolean = false
     ) {
     private var _lamportTimestamp = 0uL
     val lamportTimestamp: ULong
@@ -127,9 +136,9 @@ data class Peer(
         const val MAX_PINGS = 5
 
         fun createFromAddress(publicKey: Key, source: Address): Peer {
-            return when (val address = source) {
-                is IPv4Address -> Peer(publicKey, address = address)
-                is BluetoothAddress -> Peer(publicKey, bluetoothAddress = address)
+            return when (source) {
+                is IPv4Address -> Peer(publicKey, address = source)
+                is BluetoothAddress -> Peer(publicKey, bluetoothAddress = source)
                 else -> Peer(publicKey)
             }
         }

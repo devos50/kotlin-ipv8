@@ -18,7 +18,7 @@ import nl.tudelft.ipv8.util.hexToBytes
 import java.util.*
 import kotlin.random.Random
 
-private val logger = KotlinLogging.logger {}
+private val logger = KotlinLogging.logger("Community")
 
 abstract class Community : Overlay {
     protected val prefix: ByteArray
@@ -108,7 +108,6 @@ abstract class Community : Overlay {
                 return
             }
         }
-
         val packet = createIntroductionRequest(address)
         send(address, packet)
     }
@@ -141,11 +140,12 @@ abstract class Community : Overlay {
 
         val packetPrefix = data.copyOfRange(0, prefix.size)
         if (!packetPrefix.contentEquals(prefix)) {
-            // logger.debug("prefix not matching")
+            logger.debug("prefix not matching")
             return
         }
 
         val msgId = data[prefix.size].toUByte().toInt()
+        logger.debug { "msgId: $msgId" }
         val handler = messageHandlers[msgId]
 
         if (handler != null) {
@@ -215,8 +215,10 @@ abstract class Community : Overlay {
 
         if (intro != null) {
             // TODO: Seems like a bad practice to send a packet in the create method...
-            val packet = createPunctureRequest(requester.lanAddress, requester.wanAddress,
-                identifier)
+            val packet = createPunctureRequest(
+                requester.lanAddress, requester.wanAddress,
+                identifier
+            )
             send(intro, packet)
         }
 
@@ -259,7 +261,8 @@ abstract class Community : Overlay {
         prefix: ByteArray = this.prefix,
         encrypt: Boolean = false,
         timestamp: ULong? = null,
-        recipient: Peer? = null
+        recipient: Peer? = null,
+        logging: Boolean = false
     ): ByteArray {
         val payloads = mutableListOf<Serializable>()
         if (sign) {
@@ -267,15 +270,7 @@ abstract class Community : Overlay {
         }
         payloads += GlobalTimeDistributionPayload(timestamp ?: claimGlobalTime())
         payloads += payload
-        return serializePacket(
-            messageId,
-            payloads,
-            sign,
-            peer,
-            prefix,
-            encrypt,
-            recipient
-        )
+        return serializePacket(messageId, payloads, sign, peer, prefix, encrypt, recipient, logging)
     }
 
     /**
@@ -293,7 +288,8 @@ abstract class Community : Overlay {
         peer: Peer = myPeer,
         prefix: ByteArray = this.prefix,
         encrypt: Boolean = false,
-        recipient: Peer? = null
+        recipient: Peer? = null,
+        logging: Boolean = false
     ): ByteArray {
         var packet = prefix
         packet += messageId.toChar().toByte()
@@ -304,9 +300,15 @@ abstract class Community : Overlay {
 
         for ((index, item) in payload.withIndex()) {
             val serialized = item.serialize()
+            if (logging) {
+                logger.debug { "serialized packet = ${serialized.joinToString(", ")}" }
+            }
             // Encrypt the main payload if we can
             packet += if (index == payload.size - 1 && encrypt && recipient != null) {
                 val encrypted = recipient.publicKey.encrypt(serialized)
+                if (logging) {
+                    logger.debug { "serialized packet encrypted = ${encrypted.joinToString(", ")}" }
+                }
                 encrypted
             } else {
                 serialized
@@ -326,15 +328,20 @@ abstract class Community : Overlay {
      */
 
     internal fun onIntroductionRequestPacket(packet: Packet) {
-        val (peer, payload) =
-            packet.getAuthPayload(IntroductionRequestPayload.Deserializer)
-        onIntroductionRequest(peer, payload)
+        println(packet)
+//        val (peer, payload) =
+//            packet.getAuthPayload(IntroductionRequestPayload.Deserializer)
+//        onIntroductionRequest(peer, payload)
     }
 
     internal fun onIntroductionResponsePacket(packet: Packet) {
         val (peer, payload) =
-            packet.getAuthPayload(IntroductionResponsePayload.Deserializer)
-        onIntroductionResponse(peer, payload)
+            packet.getAuthPayload(IntroductionResponsePayload.Deserializer, true)
+        if (peer.address.port == 55555) {
+            onIntroductionResponse(peer, payload)
+        } else {
+            addEstimatedWan(peer, payload.destinationAddress)
+        }
     }
 
     internal fun onPuncturePacket(packet: Packet) {
@@ -352,8 +359,7 @@ abstract class Community : Overlay {
     /*
      * Request handling
      */
-
-    internal open fun onIntroductionRequest(
+    protected open fun onIntroductionRequest(
         peer: Peer,
         payload: IntroductionRequestPayload
     ) {
@@ -396,7 +402,8 @@ abstract class Community : Overlay {
 
         // Process introduced addresses
         if (!payload.wanIntroductionAddress.isEmpty() &&
-            payload.wanIntroductionAddress.ip != myEstimatedWan.ip) {
+            payload.wanIntroductionAddress != myEstimatedWan
+        ) {
             // WAN is not empty and it is not same as ours
 
             if (!payload.lanIntroductionAddress.isEmpty()) {
@@ -409,7 +416,8 @@ abstract class Community : Overlay {
             // request and probably already sent a puncture to us.
             discoverAddress(peer, payload.wanIntroductionAddress, serviceId)
         } else if (!payload.lanIntroductionAddress.isEmpty() &&
-            payload.wanIntroductionAddress.ip == myEstimatedWan.ip) {
+            payload.wanIntroductionAddress.ip == myEstimatedWan.ip
+        ) {
             // LAN is not empty and WAN is the same as ours => they are on the same LAN
             discoverAddress(peer, payload.lanIntroductionAddress, serviceId)
         } else if (!payload.wanIntroductionAddress.isEmpty()) {
@@ -421,8 +429,10 @@ abstract class Community : Overlay {
 
             // Assume LAN is same as ours (e.g. multiple instances running on a local machine),
             // and port same as for WAN (works only if NAT does not change port)
-            discoverAddress(peer, IPv4Address(myEstimatedLan.ip, payload.wanIntroductionAddress.port),
-                serviceId)
+            discoverAddress(
+                peer, IPv4Address(myEstimatedLan.ip, payload.wanIntroductionAddress.port),
+                serviceId
+            )
         }
     }
 
@@ -432,8 +442,10 @@ abstract class Community : Overlay {
         if (!addressIsLan(peer.address) && !peer.address.isLoopback() && !peer.address.isEmpty()) {
             // If this is a new peer, add our estimated WAN to the WAN estimation log which can be
             // used to determine symmetric NAT behavior
-            network.wanLog.addItem(WanEstimationLog.WanLogItem(
-                Date(), peer.address, myEstimatedLan, wan)
+            network.wanLog.addItem(
+                WanEstimationLog.WanLogItem(
+                    Date(), peer.address, myEstimatedLan, wan
+                )
             )
         }
     }
@@ -475,12 +487,12 @@ abstract class Community : Overlay {
         send(target, packet)
     }
 
-    protected fun send(peer: Peer, data: ByteArray) {
+    protected fun send(peer: Peer, data: ByteArray, reliable: Boolean = false) {
         val verifiedPeer = network.getVerifiedByPublicKeyBin(peer.publicKey.keyToBin())
-        endpoint.send(verifiedPeer ?: peer, data)
+        endpoint.send(verifiedPeer ?: peer, data, reliable)
     }
 
-    protected fun send(address: Address, data: ByteArray) {
+    protected open fun send(address: Address, data: ByteArray) {
         val probablePeer = network.getVerifiedByAddress(address)
         if (probablePeer != null) {
             probablePeer.lastRequest = Date()
